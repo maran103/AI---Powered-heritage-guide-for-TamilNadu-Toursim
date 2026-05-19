@@ -20,6 +20,8 @@ load_dotenv()
 
 app = FastAPI()
 
+print("MAIN FILE STARTED")
+
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,

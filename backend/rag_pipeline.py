@@ -1,5 +1,9 @@
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+import os
+
+print("CURRENT DIR:", os.getcwd())
+print("FILES:", os.listdir())
 
 # Load embeddings
 embeddings = HuggingFaceEmbeddings(
