@@ -6,6 +6,16 @@ pydantic
 pymongo
 bcrypt
 email-validator
-
+motor
+pillow
 certifi
 dnspython
+langchain
+langchain-community
+langchain-huggingface
+langchain-text-splitters
+sentence-transformers
+torch
+faiss-cpu
+gtts
+python-multipart

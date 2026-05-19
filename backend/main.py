@@ -6,12 +6,14 @@ from pydantic import BaseModel, EmailStr
 from dotenv import load_dotenv
 from groq import Groq
 from prompt import heritage_prompt
+from rag_pipeline import retrieve_context
 from mongo_database import MongoDatabase
 from typing import Optional
 import json
 from gtts import gTTS
 import io
 from fastapi.responses import Response
+
 
 # Load environment variables
 load_dotenv()
@@ -200,7 +202,23 @@ def chat(req: ChatRequest, user_id: str = Header(None, alias="user-id")):
         history=history,
         visited_sites=visited_places
     )
+
+    # Retrieve heritage knowledge from FAISS
+    retrieved_context = retrieve_context(req.message)
+
+    print("\n===== RETRIEVED CONTEXT =====")
+    print(retrieved_context)
+    print("================================\n")
     
+    # Inject retrieved context into prompt
+    prompt = f"""
+    Use the following heritage knowledge to answer accurately.
+
+    HERITAGE KNOWLEDGE:
+    {retrieved_context}
+
+    {prompt}
+    """
     # Stream the response
     def generate_response():
         full_response = ""
@@ -208,40 +226,52 @@ def chat(req: ChatRequest, user_id: str = Header(None, alias="user-id")):
             # Determine model and message content
             model = "llama-3.1-8b-instant"
             
+            # Construct messages with history for context
+            messages = []
+            
             if req.image_base64:
-                model = "meta-llama/llama-4-scout-17b-16e-instruct"
-                # For vision, use a simpler system prompt or ensure it doesn't conflict
-                vision_prompt = f"You are a heritage expert. {prompt.split('STRICT RULES')[0]}"
-                messages = [
-                    {"role": "system", "content": vision_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": req.message},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{req.image_base64}",
-                                },
+                model = "llama-3.2-11b-vision-preview"
+                # For vision, we use a more direct instruction
+                vision_prompt = f"You are a heritage expert for Tamil Nadu. {prompt.split('BRANCHING:')[0]}"
+                messages.append({"role": "system", "content": vision_prompt})
+                
+                # Add history (last 3 messages for vision to save tokens)
+                for h_msg in history[-4:-1]:
+                    role = "user" if h_msg['type'] == "user" else "assistant"
+                    messages.append({"role": role, "content": h_msg['text']})
+                
+                # Add current vision message
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": req.message},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{req.image_base64}",
                             },
-                        ],
-                    }
-                ]
+                        },
+                    ],
+                })
             else:
-                messages = [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": req.message}
-                ]
+                messages.append({"role": "system", "content": prompt})
+                
+                # Add history (last 4 messages for better context)
+                for h_msg in history[-5:-1]:
+                    role = "user" if h_msg['type'] == "user" else "assistant"
+                    messages.append({"role": role, "content": h_msg['text']})
+                
+                # Add current message
+                messages.append({"role": "user", "content": req.message})
 
-            # Scale tokens with trip duration: 600 per day, min 2000, max 4000
-            # Tamil script needs ~1.5x more tokens per character
+            # Scale tokens: ~500 per day, min 1500, max 3000
             import re as _re
             day_match = _re.search(r'(\d+)\s*(?:day|days|நாட்கள்|நாள்|दिन)', req.message, _re.IGNORECASE)
             num_days = int(day_match.group(1)) if day_match else 2
             num_days = min(num_days, 10)
-            base_tokens = max(2000, num_days * 600)
+            base_tokens = max(1500, num_days * 500)
             max_tok = int(base_tokens * 1.5) if req.language == "ta" else base_tokens
-            max_tok = min(max_tok, 4000)  # hard cap
+            max_tok = min(max_tok, 3000)  # Lowered cap to 3000
 
             stream = client.chat.completions.create(
                 model=model,
